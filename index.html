@@ -15,6 +15,7 @@
             overflow-x: hidden; 
             overflow-y: auto;   
             font-family: 'Courier New', Courier, monospace;
+            user-select: none; /* Important for drag interaction */
         }
         
         html { background: #000; }
@@ -79,7 +80,8 @@
             width: 100%;
             height: 100%;
             z-index: 5; 
-            pointer-events: none; 
+            /* allow pointer events for drag */
+            pointer-events: auto; 
         }
 
         /* 4. Scroll Control */
@@ -88,6 +90,7 @@
             width: 100%;
             position: relative;
             z-index: 20; 
+            pointer-events: none; /* Pass clicks to canvas for drag */
         }
         
         .scroll-section {
@@ -124,6 +127,18 @@
             animation: blink 2s infinite;
             pointer-events: none;
         }
+        
+        .drag-hint {
+            position: fixed;
+            bottom: 50px;
+            width: 100%;
+            text-align: center;
+            color: #00ff41;
+            font-size: 0.7rem;
+            opacity: 0.5;
+            z-index: 50;
+            pointer-events: none;
+        }
 
         @keyframes blink { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
         ::-webkit-scrollbar { width: 0px; background: transparent; }
@@ -133,8 +148,7 @@
       {
         "imports": {
           "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
-          "lil-gui": "https://unpkg.com/lil-gui@0.19.1/dist/lil-gui.esm.min.js"
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
         }
       }
     </script>
@@ -147,7 +161,8 @@
     </audio>
 
     <div class="logo">KIUNDAI_PROTO_V1</div>
-    <div class="scroll-hint">// SCROLL TO INITIALIZE DATA STREAM //</div>
+    <div class="drag-hint">&lt; DRAG TO SPIN / SCROLL TO DIVE &gt;</div>
+    <div class="scroll-hint">// SYSTEM ONLINE //</div>
 
     <!-- BACKGROUND: GYROID -->
     <canvas id="bg-canvas"></canvas>
@@ -170,30 +185,20 @@
         <section class="scroll-section"></section>
     </div>
 
-    <!-- ========================================== -->
-    <!-- SCRIPT 0: AUDIO HANDLER                    -->
-    <!-- ========================================== -->
+    <!-- AUDIO HANDLER -->
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             const audio = document.getElementById('bg-music');
-            audio.volume = 0.5; // Set reasonable volume
-
-            // Attempt to play immediately
+            audio.volume = 0.5;
             const playPromise = audio.play();
-
             if (playPromise !== undefined) {
                 playPromise.catch(error => {
-                    console.log("Autoplay blocked by browser. Waiting for interaction.");
-                    
-                    // Fallback: Play on first interaction (Click, Tap, or Scroll)
                     const startAudio = () => {
                         audio.play();
-                        // Remove listeners so we don't try to play again
                         ['click', 'touchstart', 'keydown', 'scroll'].forEach(evt => 
                             window.removeEventListener(evt, startAudio)
                         );
                     };
-
                     ['click', 'touchstart', 'keydown', 'scroll'].forEach(evt => 
                         window.addEventListener(evt, startAudio, { once: true })
                     );
@@ -202,46 +207,29 @@
         });
     </script>
 
-    <!-- ========================================== -->
-    <!-- SCRIPT 1: BACKGROUND (GYROID FLIGHT)       -->
-    <!-- ========================================== -->
+    <!-- BACKGROUND SCRIPT (GYROID) -->
     <script>
         (function() {
             const canvas = document.getElementById('bg-canvas');
             const gl = canvas.getContext('webgl'); 
+            if (!gl) return;
 
-            if (!gl) { console.error('WebGL Not Supported for Background'); return; }
-
-            const vsSource = `
-                attribute vec4 aVertexPosition;
-                void main() { gl_Position = aVertexPosition; }
-            `;
-
+            const vsSource = `attribute vec4 aVertexPosition; void main() { gl_Position = aVertexPosition; }`;
             const fsSource = `
                 precision highp float;
                 uniform vec2 iResolution;
                 uniform float iTime;
                 uniform vec2 uMouse;
 
-                // --- 1. PATH GENERATOR ---
                 vec2 get_path(float z) {
-                    vec2 standardPath = vec2(
-                        sin(z * 0.3) * 2.0, 
-                        cos(z * 0.2) * 1.5
-                    );
+                    vec2 standardPath = vec2(sin(z * 0.3) * 2.0, cos(z * 0.2) * 1.5);
                     return standardPath + (uMouse * 0.5);
                 }
-
                 float smax(float a, float b, float k) {
                     float h = max(k - abs(a - b), 0.0);
                     return max(a, b) + h * h * 0.25 / k;
                 }
-
-                // --- 2. GEOMETRY MAP ---
-                float gyroid(vec3 p) {
-                    return dot(sin(p), cos(p.yzx));
-                }
-
+                float gyroid(vec3 p) { return dot(sin(p), cos(p.yzx)); }
                 float map(vec3 p) {
                     float scale = 0.8;
                     float d = gyroid(p * scale) * 0.7;
@@ -252,22 +240,15 @@
                     float safetyTube = 0.6 - distToPath;
                     return smax(d, safetyTube, 0.4); 
                 }
-
-                // --- 3. COLOR & TEXTURE ---
                 vec3 getMaterial(vec3 p, vec3 n) {
                     vec3 q = fract(p * 2.0) - 0.5;
                     float pat = length(q);
-                    vec3 col = mix(
-                        vec3(0.3, 0.0, 0.8), 
-                        vec3(1.0, 0.5, 0.1), 
-                        smoothstep(-0.6, 0.6, sin(p.z * 0.3 + p.y * 0.5)) 
-                    );
+                    vec3 col = mix(vec3(0.3, 0.0, 0.8), vec3(1.0, 0.5, 0.1), smoothstep(-0.6, 0.6, sin(p.z * 0.3 + p.y * 0.5)));
                     col = mix(col, vec3(1.0, 0.1, 0.6), smoothstep(0.1, 0.2, pat));
                     float dots = smoothstep(0.25, 0.3, length(q));
                     col *= 0.3 + 0.7 * dots; 
                     return col;
                 }
-
                 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
                     vec2 uv = (fragCoord * 2.0 - iResolution.xy) / iResolution.y;
                     float tVal = iTime * 1.5; 
@@ -277,27 +258,20 @@
                     vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), fwd));
                     vec3 up = cross(fwd, right);
                     vec3 rd = normalize(fwd + right * uv.x + up * uv.y);
-
                     float t = 0.0;
                     vec3 p = ro;
                     int hit = 0;
-                    
-                    for(int i = 0; i < 80; i++) {
+                    for(int i = 0; i < 60; i++) { // Optimization
                         p = ro + rd * t;
                         float d = map(p);
                         if(d < 0.001) { hit = 1; break; }
                         if(t > 40.0) break;
                         t += d * 0.6; 
                     }
-
                     vec3 col = vec3(0.0);
                     if(hit == 1) {
-                        vec2 e = vec2(0.005, 0.0);
-                        vec3 n = normalize(vec3(
-                            map(p + e.xyy) - map(p - e.xyy),
-                            map(p + e.yxy) - map(p - e.yxy),
-                            map(p + e.yyx) - map(p - e.yyx)
-                        ));
+                        vec2 e = vec2(0.01, 0.0); // Optimization
+                        vec3 n = normalize(vec3(map(p + e.xyy) - map(p - e.xyy), map(p + e.yxy) - map(p - e.yxy), map(p + e.yyx) - map(p - e.yyx)));
                         vec3 mat = getMaterial(p, n);
                         vec3 lightPos = ro + vec3(0.0, 0.5, 1.0);
                         vec3 l = normalize(lightPos - p);
@@ -308,9 +282,7 @@
                         col += vec3(1.0, 0.8, 0.8) * spec * 0.6; 
                         col += vec3(0.5, 0.2, 1.0) * rim * 0.5; 
                         col = mix(col, vec3(0.05, 0.0, 0.1), 1.0 - exp(-0.06 * t));
-                    } else {
-                        col = vec3(0.05, 0.0, 0.1);
-                    }
+                    } else { col = vec3(0.05, 0.0, 0.1); }
                     fragColor = vec4(col, 1.0);
                 }
                 void main() { mainImage(gl_FragColor, gl_FragCoord.xy); }
@@ -323,64 +295,53 @@
                 if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) return null;
                 return shader;
             }
-
             const program = gl.createProgram();
             const vShader = createShader(gl, gl.VERTEX_SHADER, vsSource);
             const fShader = createShader(gl, gl.FRAGMENT_SHADER, fsSource);
-            if (!vShader || !fShader) return;
+            if (vShader && fShader) {
+                gl.attachShader(program, vShader);
+                gl.attachShader(program, fShader);
+                gl.linkProgram(program);
+                if (gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                    const uRes = gl.getUniformLocation(program, 'iResolution');
+                    const uTime = gl.getUniformLocation(program, 'iTime');
+                    const uMouse = gl.getUniformLocation(program, 'uMouse'); 
+                    const buffer = gl.createBuffer();
+                    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,1, 1,1, -1,-1, 1,-1]), gl.STATIC_DRAW);
+                    const aPos = gl.getAttribLocation(program, 'aVertexPosition');
+                    gl.enableVertexAttribArray(aPos);
+                    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-            gl.attachShader(program, vShader);
-            gl.attachShader(program, fShader);
-            gl.linkProgram(program);
-            if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return;
+                    let tx = 0, ty = 0, cx = 0, cy = 0;
+                    window.addEventListener('mousemove', (e) => { tx = (e.clientX/window.innerWidth)*2-1; ty = -((e.clientY/window.innerHeight)*2-1); });
+                    window.addEventListener('touchmove', (e) => { if(e.touches.length) { tx = (e.touches[0].clientX/window.innerWidth)*2-1; ty = -((e.touches[0].clientY/window.innerHeight)*2-1); } }, { passive: true });
 
-            const uRes = gl.getUniformLocation(program, 'iResolution');
-            const uTime = gl.getUniformLocation(program, 'iTime');
-            const uMouse = gl.getUniformLocation(program, 'uMouse'); 
-            
-            const buffer = gl.createBuffer();
-            gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,1, 1,1, -1,-1, 1,-1]), gl.STATIC_DRAW);
-            const aPos = gl.getAttribLocation(program, 'aVertexPosition');
-            gl.enableVertexAttribArray(aPos);
-            gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
-
-            let targetMouseX = 0, targetMouseY = 0, currentMouseX = 0, currentMouseY = 0;
-            function updateMouse(x, y) {
-                targetMouseX = (x / window.innerWidth) * 2 - 1;
-                targetMouseY = -((y / window.innerHeight) * 2 - 1);
-            }
-            window.addEventListener('mousemove', (e) => updateMouse(e.clientX, e.clientY));
-            window.addEventListener('touchmove', (e) => {
-                if(e.touches.length > 0) updateMouse(e.touches[0].clientX, e.touches[0].clientY);
-            }, { passive: true });
-
-            function render(time) {
-                if (canvas.width !== window.innerWidth || canvas.height !== window.innerHeight) {
-                    canvas.width = window.innerWidth;
-                    canvas.height = window.innerHeight;
-                    gl.viewport(0, 0, canvas.width, canvas.height);
+                    function render(time) {
+                        if (canvas.width !== window.innerWidth || canvas.height !== window.innerHeight) {
+                            canvas.width = window.innerWidth;
+                            canvas.height = window.innerHeight;
+                            gl.viewport(0, 0, canvas.width, canvas.height);
+                        }
+                        cx += (tx - cx) * 0.05; cy += (ty - cy) * 0.05;
+                        gl.useProgram(program);
+                        gl.uniform2f(uRes, canvas.width, canvas.height);
+                        gl.uniform1f(uTime, time * 0.001);
+                        gl.uniform2f(uMouse, cx, cy); 
+                        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+                        requestAnimationFrame(render);
+                    }
+                    requestAnimationFrame(render);
                 }
-                currentMouseX += (targetMouseX - currentMouseX) * 0.05;
-                currentMouseY += (targetMouseY - currentMouseY) * 0.05;
-
-                gl.useProgram(program);
-                gl.uniform2f(uRes, canvas.width, canvas.height);
-                gl.uniform1f(uTime, time * 0.001);
-                gl.uniform2f(uMouse, currentMouseX, currentMouseY); 
-
-                gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-                requestAnimationFrame(render);
             }
-            requestAnimationFrame(render);
         })();
     </script>
 
-    <!-- ========================================== -->
-    <!-- SCRIPT 2: FOREGROUND (THREE.JS FLAGS)      -->
-    <!-- ========================================== -->
+    <!-- FOREGROUND SCRIPT (THREE.JS FLAGS) -->
     <script type="module">
         import * as THREE from 'three';
+        import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+        import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
 
         const container = document.getElementById('flag-canvas-container');
         const scene = new THREE.Scene();
@@ -394,47 +355,39 @@
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         container.appendChild(renderer.domElement);
 
-        // Updated VERTEX SHADER for "Rotty" Look
+        // --- SHADERS ---
         const vertexShader = `
             uniform float uTime;
             uniform float uWindStrength;
             uniform float uFabricFreq;
-            
             varying vec2 vUv;
             varying float vZ;
 
-            float random (in vec2 st) {
-                return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
-            }
+            float random (in vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123); }
 
             void main() {
                 vUv = uv;
                 vec3 pos = position;
-
-                // WIND LOGIC (Minimal movement as requested: Wind=0.0)
                 float looseFactor = 1.0 - uv.y; 
                 float pinInfluence = pow(looseFactor, 1.2); 
                 float wave1 = sin(uv.x * 4.0 + uTime * 1.5);
                 float wave2 = sin(uv.x * 8.0 + uTime * 3.0 + uv.y * 3.0); 
                 float twitch = (random(vec2(uTime * 0.5, uv.y)) - 0.5) * 0.02 * uWindStrength;
-
                 float displacement = (uWindStrength * 1.5 + (wave1+wave2)*0.5 * uFabricFreq) * pinInfluence;
-                
                 pos.y += (sin(displacement) * 0.1) * pinInfluence;
                 pos.z += displacement + twitch;
-                pos.z -= abs(uv.x - 0.5) * 0.2; // Perspective curve
-
+                pos.z -= abs(uv.x - 0.5) * 0.2; 
                 vZ = displacement;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
             }
         `;
 
-        // Updated FRAGMENT SHADER for "Rotty" Look
         const fragmentShader = `
             uniform sampler2D uTexture;
             uniform float uTime;
+            uniform bool uIsBackside;
+            uniform vec3 uColorTint;
             
-            // Effect Parameters
             uniform float uEdgeScale;
             uniform float uEdgeAmp;
             uniform float uFrameSize;
@@ -445,7 +398,6 @@
             uniform float uRGBShift;
             uniform float uContrast;
             uniform float uVignette;
-            uniform vec3 uColorTint;
             
             varying vec2 vUv;
             varying float vZ;
@@ -456,9 +408,7 @@
                 vec2 ip = floor(p);
                 vec2 u = fract(p);
                 u = u*u*(3.0-2.0*u);
-                float res = mix(
-                    mix(random(ip), random(ip+vec2(1.0,0.0)), u.x),
-                    mix(random(ip+vec2(0.0,1.0)), random(ip+vec2(1.0,1.0)), u.x), u.y);
+                float res = mix(mix(random(ip), random(ip+vec2(1.0,0.0)), u.x), mix(random(ip+vec2(0.0,1.0)), random(ip+vec2(1.0,1.0)), u.x), u.y);
                 return res;
             }
 
@@ -472,57 +422,56 @@
             void main() {
                 vec2 uv = vUv;
                 
-                // 1. GLITCH
-                float glitchLine = step(0.98, random(vec2(0.0, uv.y * 10.0 + uTime * 5.0)));
-                float glitchShift = (random(vec2(uTime, uv.y)) - 0.5) * uGlitchStrength * glitchLine;
-                uv.x += glitchShift;
-
-                // 2. EDGE DECAY
                 float noiseVal = fbm(uv * uEdgeScale * vec2(1.0, 5.0)); 
                 float dist = max(abs(uv.x - 0.5), abs(uv.y - 0.5));
                 float raggedDist = dist + noiseVal * uEdgeAmp;
                 float borderLimit = 0.5 - uFrameSize; 
                 if (raggedDist > borderLimit) discard;
 
-                // 3. RGB SHIFT
-                float rShift = uRGBShift * 0.02 * (1.0 + glitchLine);
-                vec2 rUv = uv + vec2(rShift, 0.0);
-                vec2 bUv = uv - vec2(rShift, 0.0);
-                
-                float r = texture2D(uTexture, rUv).r;
-                float g = texture2D(uTexture, uv).g;
-                float b = texture2D(uTexture, bUv).b;
-                vec3 texColor = vec3(r, g, b);
-                
-                // Apply User Tint
-                texColor *= uColorTint;
+                vec3 finalColor;
 
-                // 4. COLOR GRADING
-                texColor = (texColor - 0.5) * (1.0 + uContrast) + 0.5;
-                vec3 rustTint = vec3(1.1, 1.0, 0.8);
-                texColor *= rustTint;
+                if (uIsBackside) {
+                    // BACKSIDE: Void + Grid
+                    vec3 blackVoid = vec3(0.02, 0.02, 0.02);
+                    float grid = step(0.98, fract(uv.x * 10.0)) + step(0.98, fract(uv.y * 10.0));
+                    blackVoid += vec3(0.1, 0.0, 0.0) * grid; 
+                    finalColor = blackVoid;
+                } else {
+                    // FRONTSIDE: Glitch Texture
+                    float glitchLine = step(0.98, random(vec2(0.0, uv.y * 10.0 + uTime * 5.0)));
+                    float glitchShift = (random(vec2(uTime, uv.y)) - 0.5) * uGlitchStrength * glitchLine;
+                    uv.x += glitchShift;
 
-                // 5. TECH OVERLAYS
-                float scanline = sin(uv.y * 200.0 + uTime * 2.0) * 0.5 + 0.5;
-                texColor -= scanline * uScanlines * 0.3;
-                
-                float grid = step(0.98, fract(uv.x * 20.0)) + step(0.98, fract(uv.y * 20.0));
-                texColor += vec3(0.0, 0.1, 0.0) * grid * 0.2;
+                    float rShift = uRGBShift * 0.02 * (1.0 + glitchLine);
+                    vec2 rUv = uv + vec2(rShift, 0.0);
+                    vec2 bUv = uv - vec2(rShift, 0.0);
+                    
+                    float r = texture2D(uTexture, rUv).r;
+                    float g = texture2D(uTexture, uv).g;
+                    float b = texture2D(uTexture, bUv).b;
+                    vec3 texColor = vec3(r, g, b);
+                    
+                    texColor *= uColorTint;
+                    texColor = (texColor - 0.5) * (1.0 + uContrast) + 0.5;
+                    vec3 rustTint = vec3(1.1, 1.0, 0.8);
+                    texColor *= rustTint;
 
-                // 6. BASE MATERIAL
-                float grain = random(uv * 100.0 + uTime) * 0.15;
-                vec3 darkBase = uBaseColor - grain;
-                
-                float lum = dot(texColor, vec3(0.299, 0.587, 0.114));
-                vec3 finalColor = mix(darkBase, texColor, 0.8 + lum * 0.2);
+                    float scanline = sin(uv.y * 200.0 + uTime * 2.0) * 0.5 + 0.5;
+                    texColor -= scanline * uScanlines * 0.3;
+                    
+                    float grid = step(0.98, fract(uv.x * 20.0)) + step(0.98, fract(uv.y * 20.0));
+                    texColor += vec3(0.0, 0.1, 0.0) * grid * 0.2;
 
-                // 7. LIGHTING
+                    float grain = random(uv * 100.0 + uTime) * 0.15;
+                    vec3 darkBase = uBaseColor - grain;
+                    float lum = dot(texColor, vec3(0.299, 0.587, 0.114));
+                    finalColor = mix(darkBase, texColor, 0.8 + lum * 0.2);
+                }
+
                 float shadow = vZ * 0.5;
                 finalColor -= shadow;
                 float edgeBurn = smoothstep(borderLimit - 0.05, borderLimit, raggedDist);
                 finalColor = mix(finalColor, vec3(0.8, 0.2, 0.0), edgeBurn * 0.5); 
-
-                // Vignette
                 float len = length(uv - 0.5);
                 finalColor *= 1.0 - (len * uVignette * 1.5);
 
@@ -530,9 +479,11 @@
             }
         `;
 
-        const flagGeometry = new THREE.PlaneGeometry(1.2, 0.8, 100, 100); // High res for edge decay
+        // --- ASSETS & OBJECTS ---
+        const flagGeometry = new THREE.PlaneGeometry(1.2, 0.8, 80, 80);
         const textureLoader = new THREE.TextureLoader();
         const placeholderTex = textureLoader.load('https://images.unsplash.com/photo-1550684848-fac1c5b4e853?q=80&w=600&auto=format&fit=crop');
+        const fontLoader = new FontLoader();
 
         const flags = [];
         const gap = 3.0; 
@@ -544,57 +495,148 @@
             new THREE.Vector3(1.0, 0.8, 0.0) 
         ];
 
-        for(let i = 0; i < 5; i++) {
-            const material = new THREE.ShaderMaterial({
-                vertexShader: vertexShader,
-                fragmentShader: fragmentShader,
-                uniforms: {
-                    uTexture: { value: placeholderTex },
-                    uTime: { value: 0 },
-                    // NEW PARAMETERS FROM YOUR CODE
-                    uWindStrength: { value: 0.0 },
-                    uFabricFreq: { value: 0.5 },
-                    uEdgeScale: { value: 10.0 },
-                    uEdgeAmp: { value: 0.158 },
-                    uFrameSize: { value: 0.0 },
-                    uBaseColor: { value: new THREE.Color(0x1a1a1a) },
-                    uGlitchStrength: { value: 0.415 },
-                    uRGBShift: { value: 0.3325 },
-                    uScanlines: { value: 0.19 },
-                    uContrast: { value: 0.465 },
-                    uVignette: { value: 0.978 },
-                    uColorTint: { value: tints[i] }
-                },
-                side: THREE.DoubleSide,
-                transparent: true
-            });
+        // LOAD FONT FOR HIDDEN TEXT
+        let font = null;
+        fontLoader.load('https://unpkg.com/three@0.160.0/examples/fonts/helvetiker_bold.typeface.json', function (loadedFont) {
+            font = loadedFont;
+            createFlags();
+        });
 
-            const mesh = new THREE.Mesh(flagGeometry, material);
-            mesh.position.y = -i * gap;
-            mesh.rotation.y = -0.1; 
-            
-            scene.add(mesh);
-            flags.push(mesh);
+        function createFlags() {
+            for(let i = 0; i < 5; i++) {
+                // Group to hold front, back, and text
+                const flagGroup = new THREE.Group();
+                flagGroup.position.y = -i * gap;
+
+                // FRONT
+                const matFront = new THREE.ShaderMaterial({
+                    vertexShader: vertexShader,
+                    fragmentShader: fragmentShader,
+                    uniforms: {
+                        uTexture: { value: placeholderTex },
+                        uTime: { value: 0 },
+                        uIsBackside: { value: false },
+                        uColorTint: { value: tints[i] },
+                        // PARAMS
+                        uWindStrength: { value: 0.0 },
+                        uFabricFreq: { value: 0.5 },
+                        uEdgeScale: { value: 10.0 },
+                        uEdgeAmp: { value: 0.158 },
+                        uFrameSize: { value: 0.0 },
+                        uBaseColor: { value: new THREE.Color(0x1a1a1a) },
+                        uGlitchStrength: { value: 0.415 },
+                        uRGBShift: { value: 0.3325 },
+                        uScanlines: { value: 0.19 },
+                        uContrast: { value: 0.465 },
+                        uVignette: { value: 0.978 },
+                    },
+                    side: THREE.FrontSide,
+                    transparent: true
+                });
+
+                // BACK
+                const matBack = matFront.clone();
+                matBack.uniforms = THREE.UniformsUtils.clone(matFront.uniforms);
+                matBack.uniforms.uIsBackside.value = true;
+                matBack.side = THREE.BackSide;
+
+                const meshFront = new THREE.Mesh(flagGeometry, matFront);
+                const meshBack = new THREE.Mesh(flagGeometry, matBack);
+                
+                flagGroup.add(meshFront);
+                flagGroup.add(meshBack);
+
+                // TEXT
+                if (font) {
+                    const textGeo = new TextGeometry('THE VOID\nSTARES BACK', {
+                        font: font, size: 0.08, height: 0.00, curveSegments: 4,
+                    });
+                    textGeo.center();
+                    const textMat = new THREE.MeshBasicMaterial({ color: 0xff0033 });
+                    const textMesh = new THREE.Mesh(textGeo, textMat);
+                    textMesh.position.z = -0.02; 
+                    textMesh.rotation.y = Math.PI; 
+                    textMesh.visible = false; 
+                    textMesh.name = "hiddenText"; // Tag for update loop
+                    flagGroup.add(textMesh);
+                }
+
+                scene.add(flagGroup);
+                flags.push(flagGroup);
+            }
         }
 
+        // --- INTERACTION ---
+        let isDragging = false;
+        let previousMouseX = 0;
+        let targetRotationY = 0;
+
+        function onStart(x) { isDragging = true; previousMouseX = x; }
+        function onEnd() { isDragging = false; }
+        function onMove(x) {
+            if (!isDragging) return;
+            const delta = x - previousMouseX;
+            targetRotationY += delta * 0.01;
+            previousMouseX = x;
+        }
+
+        // Mouse
+        window.addEventListener('mousedown', (e) => onStart(e.clientX));
+        window.addEventListener('mouseup', onEnd);
+        window.addEventListener('mousemove', (e) => onMove(e.clientX));
+        
+        // Touch
+        window.addEventListener('touchstart', (e) => onStart(e.touches[0].clientX), {passive: false});
+        window.addEventListener('touchend', onEnd);
+        window.addEventListener('touchmove', (e) => { 
+            // Prevent default to allow drag without scrolling if desired, 
+            // but usually we want to allow scrolling vertical. 
+            // We only capture horizontal if needed. 
+            // For now, let's allow scroll.
+            onMove(e.touches[0].clientX); 
+        }, {passive: false});
+
+
+        // --- ANIMATION ---
         const clock = new THREE.Clock();
+        const forwardVector = new THREE.Vector3(0, 0, 1);
+        const worldVector = new THREE.Vector3();
 
         function animate() {
             requestAnimationFrame(animate);
             const time = clock.getElapsedTime();
 
-            flags.forEach(flag => {
-                flag.material.uniforms.uTime.value = time;
-            });
-
+            // SCROLL POSITION
             const totalScrollHeight = document.documentElement.scrollHeight - window.innerHeight;
             const scrollPos = window.scrollY;
             const scrollPercent = scrollPos / (totalScrollHeight || 1); 
-            
-            const totalDistance = (flags.length - 1) * gap;
-            const targetY = -scrollPercent * totalDistance;
-            
-            camera.position.y += (targetY - camera.position.y) * 0.1;
+            const totalDistance = 4 * gap; // 5 flags, 4 gaps
+            const targetCamY = -scrollPercent * totalDistance;
+            camera.position.y += (targetCamY - camera.position.y) * 0.1;
+
+            // UPDATE FLAGS
+            flags.forEach((group, index) => {
+                // Update Uniforms
+                group.children.forEach(child => {
+                    if (child.material && child.material.uniforms) {
+                        child.material.uniforms.uTime.value = time;
+                    }
+                });
+
+                // 1. Rotation (Swipe)
+                group.rotation.y += (targetRotationY - group.rotation.y) * 0.1;
+
+                // 2. Vertical Float
+                group.rotation.x = Math.sin(time * 0.8 + index) * 0.08; 
+
+                // 3. Text Visibility
+                const textMesh = group.getObjectByName("hiddenText");
+                if (textMesh) {
+                    worldVector.copy(forwardVector).applyQuaternion(group.quaternion);
+                    // If z < -0.1, back is facing camera
+                    textMesh.visible = (worldVector.z < -0.1);
+                }
+            });
 
             renderer.render(scene, camera);
         }
@@ -608,3 +650,4 @@
     </script>
 </body>
 </html>
+

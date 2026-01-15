@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rotty Cyberpunk Flag - Input Fix</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background-color: #050505; 
+            font-family: 'Courier New', Courier, monospace; 
+            color: #ff0044;
+            user-select: none; 
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between; 
+            align-items: center;
+            padding: 5vh 0;
+            box-sizing: border-box;
+            z-index: 10;
+            pointer-events: none; /* Container lets clicks pass through */
+        }
+
+        .ui-element {
+            opacity: 0;
+            transition: opacity 0.4s ease;
+            pointer-events: none; /* CRITICAL: Default to none so we can spin! */
+        }
+
+        /* Only allow interaction when visible */
+        .ui-element.visible {
+            opacity: 1;
+            /* We handle pointer-events for specific inputs separately below */
+        }
+
+        /* 1. TOP: HEADLINE (Always pass-through to allow spinning) */
+        h1 {
+            font-size: 3rem;
+            margin: 0;
+            text-shadow: 0 0 15px #ff0044;
+            letter-spacing: 8px;
+            background: rgba(0,0,0,0.4); 
+            padding: 10px 20px;
+            pointer-events: none !important; /* Never block clicks */
+        }
+
+        /* 2. CENTER: TEXTAREA */
+        textarea {
+            width: 60vw;  
+            height: 40vh; 
+            background: rgba(0, 0, 0, 0.3); 
+            border: 1px solid rgba(255, 0, 68, 0.5);
+            color: #ff0044;
+            font-size: 1.5rem;
+            padding: 20px;
+            font-family: inherit;
+            box-shadow: 0 0 20px rgba(255, 0, 68, 0.1);
+            outline: none;
+            resize: none;
+            backdrop-filter: blur(2px); 
+        }
+        
+        /* Only interactive when visible class is added */
+        textarea.visible {
+            pointer-events: auto; 
+        }
+
+        textarea:focus {
+            background: rgba(0, 0, 0, 0.6);
+            box-shadow: 0 0 30px rgba(255, 0, 68, 0.3);
+            border-color: #ff0044;
+        }
+
+        /* 3. BOTTOM: BUTTON */
+        button {
+            background: #ff0044;
+            color: #000;
+            border: none;
+            padding: 15px 60px;
+            font-size: 1.2rem;
+            font-family: inherit;
+            font-weight: bold;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 4px;
+            box-shadow: 0 0 15px #ff0044;
+            transition: all 0.2s;
+            margin-bottom: 5vh;
+        }
+        
+        /* Only interactive when visible */
+        button.visible {
+            pointer-events: auto;
+        }
+
+        button:hover {
+            background: #fff;
+            box-shadow: 0 0 40px #ff0044;
+        }
+        
+        #fileInput { display: none; }
+        
+        .lil-gui.root {
+            position: absolute;
+            top: auto !important;
+            bottom: 20px;
+            right: 20px;
+            z-index: 100;
+        }
+        
+        #instruction {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: #444;
+            font-size: 0.8rem;
+            pointer-events: none;
+            opacity: 0.7;
+        }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+          "lil-gui": "https://unpkg.com/lil-gui@0.19.1/dist/lil-gui.esm.min.js"
+        }
+      }
+    </script>
+</head>
+<body>
+
+<input type="file" id="fileInput" accept="image/*,video/*">
+
+<div id="ui-layer">
+    <h1 class="ui-element">THE VOID</h1>
+    <textarea class="ui-element" placeholder="ENTER PROTOCOL..."></textarea>
+    <button class="ui-element" onclick="alert('SIGNAL TRANSMITTED')">CONNECT</button>
+</div>
+
+<div id="instruction">&lt; DRAG ANYWHERE TO SPIN &gt;</div>
+
+<script type="module">
+import * as THREE from 'three';
+import GUI from 'lil-gui';
+
+// --- SCENE ---
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x050505); 
+scene.fog = new THREE.FogExp2(0x050505, 0.15); 
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(0, 0, 2.5);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+const stageGroup = new THREE.Group();
+scene.add(stageGroup);
+
+// --- SHADERS ---
+const vertexShader = `
+    uniform float uTime;
+    uniform float uWindStrength;
+    uniform float uFabricFreq;
+    
+    varying vec2 vUv;
+    varying float vZ;
+    varying float vNoise;
+
+    float random (in vec2 st) {
+        return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
+    }
+
+    void main() {
+        vUv = uv;
+        vec3 pos = position;
+
+        // WIND LOGIC
+        float looseFactor = 1.0 - uv.y; 
+        float pinInfluence = pow(looseFactor, 1.2); 
+
+        float wave1 = sin(uv.x * 4.0 + uTime * 1.5);
+        float wave2 = sin(uv.x * 8.0 + uTime * 3.0 + uv.y * 3.0); 
+        float wave3 = sin(uTime * 0.8); 
+        
+        float twitch = (random(vec2(uTime * 0.5, uv.y)) - 0.5) * 0.02 * uWindStrength;
+        float ripples = (wave1 * 0.5 + wave2 * 0.2 + wave3 * 0.3);
+        float displacement = (uWindStrength * 1.5 + ripples * uFabricFreq) * pinInfluence;
+        
+        pos.y += (sin(displacement) * 0.1) * pinInfluence;
+        pos.z += displacement + twitch;
+        pos.z -= abs(uv.x - 0.5) * 0.2;
+
+        vZ = displacement;
+        vNoise = random(uv + uTime); 
+
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+    }
+`;
+
+const fragmentShader = `
+    uniform sampler2D uTexture;
+    uniform float uRatio; 
+    uniform float uTime;
+    uniform bool uIsBackside; 
+    
+    uniform float uEdgeScale;
+    uniform float uEdgeAmp;
+    uniform float uFrameSize;
+    uniform vec3 uBaseColor;
+    
+    uniform float uGlitchStrength;
+    uniform float uScanlines;
+    uniform float uRGBShift;
+    uniform float uContrast;
+    uniform float uVignette;
+    
+    varying vec2 vUv;
+    varying float vZ;
+    varying float vNoise;
+
+    float random(vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123); }
+    
+    float noise(vec2 p) {
+        vec2 ip = floor(p);
+        vec2 u = fract(p);
+        u = u*u*(3.0-2.0*u);
+        float res = mix(
+            mix(random(ip), random(ip+vec2(1.0,0.0)), u.x),
+            mix(random(ip+vec2(0.0,1.0)), random(ip+vec2(1.0,1.0)), u.x), u.y);
+        return res;
+    }
+
+    float fbm(vec2 x) {
+        float v = 0.0; float a = 0.5; vec2 shift = vec2(100.0);
+        mat2 rot = mat2(cos(0.5), sin(0.5), -sin(0.5), cos(0.50));
+        for (int i = 0; i < 4; ++i) { v += a * noise(x); x = rot * x * 2.0 + shift; a *= 0.5; }
+        return v;
+    }
+
+    void main() {
+        vec2 uv = vUv;
+        
+        float noiseVal = fbm(uv * uEdgeScale * vec2(1.0, 5.0)); 
+        float dist = max(abs(uv.x - 0.5), abs(uv.y - 0.5));
+        float raggedDist = dist + noiseVal * uEdgeAmp;
+        float borderLimit = 0.5 - uFrameSize; 
+        
+        if (raggedDist > borderLimit) discard;
+
+        vec3 finalColor;
+
+        if (uIsBackside) {
+            vec3 blackVoid = vec3(0.02, 0.02, 0.02);
+            float grid = step(0.98, fract(uv.x * 10.0)) + step(0.98, fract(uv.y * 10.0));
+            blackVoid += vec3(0.08, 0.0, 0.0) * grid; // Red Grid
+            finalColor = blackVoid;
+        } else {
+            float glitchLine = step(0.98, random(vec2(0.0, uv.y * 10.0 + uTime * 5.0)));
+            float glitchShift = (random(vec2(uTime, uv.y)) - 0.5) * uGlitchStrength * glitchLine;
+            uv.x += glitchShift;
+
+            float rShift = uRGBShift * 0.02 * (1.0 + glitchLine);
+            vec2 rUv = uv + vec2(rShift, 0.0);
+            vec2 bUv = uv - vec2(rShift, 0.0);
+            
+            float r = texture2D(uTexture, rUv).r;
+            float g = texture2D(uTexture, uv).g;
+            float b = texture2D(uTexture, bUv).b;
+            vec3 texColor = vec3(r, g, b);
+
+            texColor = (texColor - 0.5) * (1.0 + uContrast) + 0.5;
+            vec3 rustTint = vec3(1.1, 1.0, 0.8);
+            texColor *= rustTint;
+
+            float scanline = sin(uv.y * 200.0 + uTime * 2.0) * 0.5 + 0.5;
+            texColor -= scanline * uScanlines * 0.3;
+
+            float grain = random(uv * 100.0 + uTime) * 0.15;
+            vec3 darkBase = uBaseColor - grain;
+            float lum = dot(texColor, vec3(0.299, 0.587, 0.114));
+            finalColor = mix(darkBase, texColor, 0.8 + lum * 0.2);
+        }
+
+        float shadow = vZ * 0.5;
+        finalColor -= shadow;
+        
+        float edgeBurn = smoothstep(borderLimit - 0.05, borderLimit, raggedDist);
+        finalColor = mix(finalColor, vec3(0.8, 0.2, 0.0), edgeBurn * 0.5); 
+
+        float len = length(uv - 0.5);
+        finalColor *= 1.0 - (len * uVignette * 1.5);
+
+        gl_FragColor = vec4(finalColor, 1.0);
+    }
+`;
+
+// --- GEOMETRY ---
+const geometry = new THREE.PlaneGeometry(1, 1, 100, 100);
+
+// FRONT MATERIAL
+const materialFront = new THREE.ShaderMaterial({
+    vertexShader: vertexShader,
+    fragmentShader: fragmentShader,
+    uniforms: {
+        uTexture: { value: null },
+        uRatio: { value: 1.0 },
+        uTime: { value: 0 },
+        uIsBackside: { value: false },
+        
+        uWindStrength: { value: 0.0 }, 
+        uFabricFreq: { value: 0.5 },
+        uEdgeScale: { value: 10.0 },
+        uEdgeAmp: { value: 0.158 },
+        uFrameSize: { value: 0.0 },    
+        uBaseColor: { value: new THREE.Color(0x1a1a1a) }, 
+        uGlitchStrength: { value: 0.415 },
+        uRGBShift: { value: 0.3325 },
+        uScanlines: { value: 0.19 },
+        uContrast: { value: 0.465 },
+        uVignette: { value: 0.978 }
+    },
+    side: THREE.FrontSide, 
+    transparent: true
+});
+
+// BACK MATERIAL
+const materialBack = materialFront.clone();
+materialBack.uniforms = THREE.UniformsUtils.clone(materialFront.uniforms);
+materialBack.uniforms.uIsBackside.value = true;
+materialBack.side = THREE.BackSide; 
+materialBack.transparent = true;
+
+const meshFront = new THREE.Mesh(geometry, materialFront);
+const meshBack = new THREE.Mesh(geometry, materialBack);
+
+const flagGroup = new THREE.Group();
+flagGroup.add(meshFront);
+flagGroup.add(meshBack);
+stageGroup.add(flagGroup);
+
+// --- GUI ---
+const params = {
+    loadFile: function() { document.getElementById('fileInput').click(); },
+    bgColor: '#050505', 
+    baseColor: '#1a1a1a', 
+    windForce: 0.0, 
+    edgeDecay: 0.158, 
+    glitch: 0.415, 
+    rgbShift: 0.3325, 
+    scanlines: 0.19, 
+    contrast: 0.465, 
+    vignette: 0.978 
+};
+
+const gui = new GUI({ title: 'SYSTEM CONTROL' });
+const fGlobal = gui.addFolder(':: ENVIRONMENT ::');
+fGlobal.addColor(params, 'bgColor').name('Void Color').onChange(v => scene.background.set(v));
+fGlobal.addColor(params, 'baseColor').name('Material Base').onChange(v => {
+    materialFront.uniforms.uBaseColor.value.set(v);
+    materialBack.uniforms.uBaseColor.value.set(v);
+});
+
+const fPhys = gui.addFolder(':: PHYSICS ::');
+fPhys.add(params, 'windForce', 0.0, 1.0).name('Wind Drag').onChange(v => {
+    materialFront.uniforms.uWindStrength.value = v;
+    materialBack.uniforms.uWindStrength.value = v;
+});
+fPhys.add(params, 'edgeDecay', 0.0, 0.2).name('Data Rot').onChange(v => {
+    materialFront.uniforms.uEdgeAmp.value = v;
+    materialBack.uniforms.uEdgeAmp.value = v;
+});
+
+const fTech = gui.addFolder(':: TECH ROT ::');
+fTech.add(params, 'glitch', 0.0, 1.0).name('Glitch').onChange(v => materialFront.uniforms.uGlitchStrength.value = v);
+fTech.add(params, 'rgbShift', 0.0, 0.5).name('RGB Split').onChange(v => materialFront.uniforms.uRGBShift.value = v);
+fTech.add(params, 'scanlines', 0.0, 1.0).name('Scanlines').onChange(v => materialFront.uniforms.uScanlines.value = v);
+fTech.add(params, 'contrast', 0.0, 1.0).name('Contrast').onChange(v => materialFront.uniforms.uContrast.value = v);
+fTech.add(params, 'vignette', 0.0, 1.5).name('Sensor Fail').onChange(v => {
+    materialFront.uniforms.uVignette.value = v;
+    materialBack.uniforms.uVignette.value = v;
+});
+
+gui.add(params, 'loadFile').name('[ UPLOAD DATA ]');
+
+
+// --- FILE LOADING ---
+const textureLoader = new THREE.TextureLoader();
+const defaultUrl = 'https://images.unsplash.com/photo-1550684848-fac1c5b4e853?q=80&w=1000&auto=format&fit=crop'; 
+let currentVideoElement = null; 
+
+function applyTexture(texture, width, height) {
+    materialFront.uniforms.uTexture.value = texture;
+    const aspect = width / height;
+    materialFront.uniforms.uRatio.value = aspect;
+    materialBack.uniforms.uRatio.value = aspect;
+    
+    const baseScale = 1.3;
+    let scaleX, scaleY;
+    if (aspect > 1) {
+        scaleX = baseScale * aspect;
+        scaleY = baseScale;
+    } else {
+        scaleX = baseScale;
+        scaleY = baseScale / aspect;
+    }
+    
+    meshFront.scale.set(scaleX, scaleY, 1);
+    meshBack.scale.set(scaleX, scaleY, 1);
+}
+
+function loadDefaultImage() {
+    textureLoader.load(defaultUrl, (tex) => {
+        applyTexture(tex, 1000, 600);
+    });
+}
+
+loadDefaultImage();
+
+document.getElementById('fileInput').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (currentVideoElement) {
+        currentVideoElement.pause();
+        currentVideoElement.removeAttribute('src');
+        currentVideoElement.load();
+        currentVideoElement = null;
+    }
+
+    const objectUrl = URL.createObjectURL(file);
+
+    if (file.type.startsWith('video')) {
+        const video = document.createElement('video');
+        video.src = objectUrl;
+        video.loop = true;
+        video.muted = true;
+        video.playsInline = true;
+        video.crossOrigin = "anonymous";
+        video.play();
+        currentVideoElement = video;
+        const videoTexture = new THREE.VideoTexture(video);
+        videoTexture.minFilter = THREE.LinearFilter;
+        videoTexture.magFilter = THREE.LinearFilter;
+        videoTexture.format = THREE.RGBAFormat;
+        video.addEventListener('loadedmetadata', () => {
+             applyTexture(videoTexture, video.videoWidth, video.videoHeight);
+        });
+    } else {
+        textureLoader.load(objectUrl, (tex) => {
+            applyTexture(tex, tex.image.width, tex.image.height);
+        });
+    }
+});
+
+
+// --- INPUT & ROTATION LOGIC ---
+let isDragging = false;
+let previousMousePosition = { x: 0, y: 0 };
+let targetRotationY = 0;
+
+document.addEventListener('mousedown', (e) => {
+    // Only check computed styles if element is interactive
+    const style = window.getComputedStyle(e.target);
+    const isInteractive = style.pointerEvents === 'auto';
+
+    // If I clicked an interactive element (Visible Textarea/Button), STOP rotation
+    if (isInteractive && (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON')) {
+        return; 
+    }
+    
+    // Otherwise, rotate
+    if (e.target.closest('.lil-gui')) return;
+    
+    isDragging = true;
+    previousMousePosition = { x: e.clientX, y: e.clientY };
+});
+
+document.addEventListener('mouseup', () => { isDragging = false; });
+
+document.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    const deltaMove = { x: e.clientX - previousMousePosition.x };
+    targetRotationY += deltaMove.x * 0.01;
+    previousMousePosition = { x: e.clientX, y: e.clientY };
+});
+
+document.addEventListener('touchstart', (e) => {
+    const style = window.getComputedStyle(e.target);
+    const isInteractive = style.pointerEvents === 'auto';
+    
+    if (isInteractive && (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON')) {
+        return;
+    }
+    
+    if (e.target.closest('.lil-gui')) return;
+    
+    isDragging = true;
+    previousMousePosition = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+});
+
+document.addEventListener('touchend', () => { isDragging = false; });
+
+document.addEventListener('touchmove', (e) => {
+    if (!isDragging) return;
+    const deltaMove = { x: e.touches[0].clientX - previousMousePosition.x };
+    targetRotationY += deltaMove.x * 0.01;
+    previousMousePosition = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+});
+
+
+// --- ANIMATION ---
+const clock = new THREE.Clock();
+const forwardVector = new THREE.Vector3(0, 0, 1);
+const worldVector = new THREE.Vector3();
+const uiElements = document.querySelectorAll('.ui-element');
+
+function animate() {
+    requestAnimationFrame(animate);
+    const time = clock.getElapsedTime();
+    
+    materialFront.uniforms.uTime.value = time;
+    materialBack.uniforms.uTime.value = time;
+    
+    flagGroup.rotation.y += (targetRotationY - flagGroup.rotation.y) * 0.1;
+    flagGroup.rotation.x = Math.sin(time * 0.8) * 0.08;
+
+    // --- INTERFACE VISIBILITY ---
+    worldVector.copy(forwardVector).applyQuaternion(flagGroup.quaternion);
+    const zAlign = worldVector.z; 
+    
+    if (zAlign < -0.4) {
+        uiElements.forEach(el => el.classList.add('visible'));
+    } else {
+        uiElements.forEach(el => el.classList.remove('visible'));
+    }
+
+    renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>

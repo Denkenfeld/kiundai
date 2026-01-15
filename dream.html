@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Silky Smooth Fractal Flux</title>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+        canvas { display: block; width: 100%; height: 100%; }
+    </style>
+</head>
+<body>
+    <canvas id="glcanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('glcanvas');
+        const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+
+        if (!gl) { document.body.innerHTML = 'WebGL Not Supported'; }
+
+        const vsSource = `
+            attribute vec4 aVertexPosition;
+            void main() { gl_Position = aVertexPosition; }
+        `;
+
+        // NEW ENGINE: VOLUMETRIC ACCUMULATION
+        // This solves the flickering by removing "hard surfaces" entirely.
+        const fsSource = `
+            precision highp float;
+            uniform vec2 iResolution;
+            uniform float iTime;
+
+            // --- PALETTE (Neon/Cyberpunk) ---
+            vec3 palette(float t) {
+                vec3 a = vec3(0.5, 0.5, 0.5);
+                vec3 b = vec3(0.5, 0.5, 0.5);
+                vec3 c = vec3(1.0, 1.0, 1.0);
+                vec3 d = vec3(0.263, 0.416, 0.557);
+                return a + b * cos(6.28318 * (c * t + d));
+            }
+
+            mat2 rot(float a) {
+                float s = sin(a), c = cos(a);
+                return mat2(c, -s, s, c);
+            }
+
+            // --- FRACTAL GEOMETRY ---
+            // A "Mandelbox" style variant that is spacious enough to fly through
+            float map(vec3 p) {
+                vec3 q = p;
+                
+                // 1. REPETITION (Infinite Tunnel)
+                q.z = mod(p.z + iTime * 2.0, 3.0) - 1.5; // Move world instead of camera for stability
+                
+                // 2. FOLDING (The Geometry)
+                float scale = 2.0;
+                float accumulatedScale = 1.0;
+                
+                for(int i = 0; i < 4; i++) {
+                    // Box Fold
+                    q = abs(q) - vec3(0.4, 0.4, 0.3); 
+                    
+                    // Twist rotation per iteration (Smooth, not chaotic)
+                    q.xy *= rot(0.5 + iTime * 0.1); 
+                    q.xz *= rot(0.3);
+                    
+                    // Scale Fold (Menger-ish)
+                    float k = 1.2 / dot(q, q); // Inversion
+                    q *= k;
+                    accumulatedScale *= k;
+                }
+                
+                // Distance to the final shape
+                // Dividing by scale fixes artifacts
+                return length(q) / accumulatedScale; 
+            }
+
+            void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+                vec2 uv = (fragCoord * 2.0 - iResolution.xy) / iResolution.y;
+                
+                // Camera is now STATIC at 0,0,0, and the WORLD moves around it.
+                // This prevents precision errors at large distances.
+                vec3 ro = vec3(0.0, 0.0, -2.0); 
+                vec3 rd = normalize(vec3(uv, 1.5));
+                
+                // Gentle camera sway
+                rd.xy *= rot(sin(iTime * 0.2) * 0.1);
+
+                vec3 col = vec3(0.0);
+                float t = 0.0; // Distance traveled
+                
+                // --- VOLUMETRIC RENDERING LOOP ---
+                // Instead of "Did I hit a wall?", we ask "How dense is the fog here?"
+                for(int i = 0; i < 60; i++) {
+                    vec3 p = ro + rd * t;
+                    
+                    // Get distance to fractal
+                    float d = map(p); 
+                    
+                    // INVERSE LOGIC:
+                    // If we are close to geometry (d is small), we add A LOT of light.
+                    // If we are far (d is big), we add little light.
+                    // This creates the "Glowing Gas" effect.
+                    float glow = 0.02 / (0.02 + abs(d)); // Bell curve glow
+                    
+                    // Accumulate color
+                    // We oscillate the color based on depth (t) and iterations (i)
+                    vec3 layerColor = palette(length(p) * 0.1 + iTime * 0.4);
+                    
+                    col += layerColor * glow * glow; // Square it for contrast
+                    
+                    // Step forward
+                    // We never stop completely, we just slow down near structure
+                    // This prevents the "Black Screen" error.
+                    t += max(0.05, abs(d) * 0.5);
+                    
+                    if(t > 20.0) break; // Far plane
+                }
+
+                // Smooth Tone Mapping
+                col = col / (1.0 + col); // Reinhard tonemapping (prevents whiteout)
+                col = pow(col, vec3(0.4545)); // Gamma correction
+
+                // Vignette (Darker corners)
+                col *= 1.0 - length(uv) * 0.3;
+
+                fragColor = vec4(col, 1.0);
+            }
+
+            void main() {
+                mainImage(gl_FragColor, gl_FragCoord.xy);
+            }
+        `;
+
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error(gl.getShaderInfoLog(shader));
+                return null;
+            }
+            return shader;
+        }
+
+        const program = gl.createProgram();
+        const vShader = createShader(gl, gl.VERTEX_SHADER, vsSource);
+        const fShader = createShader(gl, gl.FRAGMENT_SHADER, fsSource);
+        gl.attachShader(program, vShader);
+        gl.attachShader(program, fShader);
+        gl.linkProgram(program);
+
+        const uRes = gl.getUniformLocation(program, 'iResolution');
+        const uTime = gl.getUniformLocation(program, 'iTime');
+        const buffer = gl.createBuffer();
+        
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,1, 1,1, -1,-1, 1,-1]), gl.STATIC_DRAW);
+        const aPos = gl.getAttribLocation(program, 'aVertexPosition');
+        gl.enableVertexAttribArray(aPos);
+        gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+        function render(time) {
+            if (canvas.width !== canvas.clientWidth || canvas.height !== canvas.clientHeight) {
+                canvas.width = canvas.clientWidth;
+                canvas.height = canvas.clientHeight;
+                gl.viewport(0, 0, canvas.width, canvas.height);
+            }
+            gl.useProgram(program);
+            gl.uniform2f(uRes, canvas.width, canvas.height);
+            gl.uniform1f(uTime, time * 0.001);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            requestAnimationFrame(render);
+        }
+        requestAnimationFrame(render);
+    </script>
+</body>
+</html>
